@@ -10,7 +10,7 @@ reveals a well-engineered method for constructing functional views out
 of the class-based views defined using the package. One day, while peeking
 at Flask's `View` class, I thought of a good way to encapsulate the parts of
 Flask-Classful that I regularly found myself using with something that was easy
-too hack and modify by peeking at the source.
+to hack and modify by peeking at the source.
 
 #### Differences from Flask-Classful
 
@@ -81,16 +81,16 @@ Equivalent of `flask.route` decorator, to be used within an instance of
    
    Registers the routes of the class onto the application or blueprint provided.
    
-   _function_ `.before_view_func()`
+   _function_ `before_view_func()`
    
    Runs before the view function. Can be used to set context or perform other
    mutations based on the incoming request value. The return value is ignored.
    
-   _function_ `.after_view_func(response: Flask.Response, status: int = 200)`
+   _function_ `after_view_func(response: Flask.Response, status: int = 200)`
    
    Runs after the view function, taking the response and status code as arguments.
    Can be used to mutate the response or the status code based on context. Must
-   return a tuple of `class::Flask.Response` and `class:int`.
+   return a tuple of `class::Flask.Response` and `int`.
    
 ### Running Tests
 
