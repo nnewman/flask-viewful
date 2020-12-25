@@ -1,4 +1,5 @@
-from typing import Any, Dict, Iterable, Optional, Tuple, TypedDict, Union
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 from flask import Flask, Blueprint, request, Response
 from flask.views import View
@@ -6,13 +7,24 @@ from werkzeug.exceptions import MethodNotAllowed
 from werkzeug.routing import Map, MapAdapter, Rule
 
 
-class RouteMeta(TypedDict):
+@dataclass
+class RouteMeta:
     route_path: str
     methods: Iterable[str]
-    options: Dict
+    options: Dict = field(default_factory=dict)
 
 
 route_keywords = {'index', 'get', 'post', 'put', 'patch', 'delete'}
+
+
+def _lstrip(text: str, chars: str) -> str:
+    """
+    Given a string `text`, remove the leading `chars` if and only if they
+    appear as the leading characters
+    """
+    if chars and text[:len(chars)] == chars:
+        text = text[len(chars):]
+    return text
 
 
 def route(path: str, methods: Iterable[str] = ('GET',), **options):
@@ -31,26 +43,35 @@ class ViewMeta(type):
         attrs: Dict[str, Any]
     ):
         url_map = Map()
+
+        # For bases, take the attrs that were not overridden and re-add them
+        # so they get processed
+        for base in bases:
+            if base_map := getattr(base, 'url_map', None):  # type: Map
+                for rule in base_map.iter_rules():
+                    if rule.endpoint not in attrs:
+                        attrs[rule.endpoint] = getattr(base, rule.endpoint)
+
         # Iterate over functions in the class
         # If the function has the `@route` decorator, then:
         #   For each `@route` definition:
         #     Add a rule for that `@route`
         for func_name, func in attrs.items():
             if meta_list := getattr(func, 'route_meta', None):
-                for meta in meta_list:
+                for meta in meta_list:  # type: RouteMeta
                     url_map.add(Rule(
-                        meta['route_path'],
-                        methods=meta['methods'],
+                        meta.route_path,
+                        methods=meta.methods,
                         endpoint=func_name,
-                        **meta.get('options', {})
+                        **meta.options
                     ))
 
             # Register specially named routes that don't have `@route`
-            path = '/' if func_name in {'index', 'post'} else '/id'
+            path = '/' if func_name in {'index', 'post'} else '/<id>'
             if func_name in route_keywords and not hasattr(func, 'route_meta'):
                 url_map.add(Rule(
                     path,
-                    methods=[func_name if func_name != 'index' else 'get'],
+                    methods=['get' if func_name == 'index' else func_name],
                     endpoint=func_name
                 ))
 
@@ -62,10 +83,15 @@ class GenericView(View, metaclass=ViewMeta):
     route_base: Optional[str] = None
     route_prefix: Optional[str] = None
 
+    _bp_prefix: Optional[str] = None  # Placeholder for prefix on the BP
+
     def dispatch_request(self, **kwargs):
+        bp_prefix = self._bp_prefix or ''
         prefix = self.route_prefix or ''
         base = self.route_base or ''
-        path = request.url_rule.rule.lstrip(prefix).lstrip(base)
+        path = _lstrip(request.url_rule.rule, bp_prefix)  # strip bp_prefix
+        path = _lstrip(path, prefix)  # strip class prefix
+        path = _lstrip(path, base)  # strip route base
         method = request.method.lower()
 
         view_func, _ = self.url_map_adapter.match(path, method)
@@ -86,6 +112,10 @@ class GenericView(View, metaclass=ViewMeta):
 
     @classmethod
     def register(cls, app_or_bp: Union[Blueprint, Flask]):
+        # If the blueprint has a url_prefix, stash it on the class
+        if isinstance(app_or_bp, Blueprint):
+            cls._bp_prefix = app_or_bp.url_prefix
+
         prefix = cls.route_prefix or ''
         base = cls.route_base or ''
         view = cls.as_view(cls.__name__)
@@ -97,6 +127,8 @@ class GenericView(View, metaclass=ViewMeta):
                 for key, val in rule.__dict__.items()
                 if key not in _opts and not key.startswith('_')
             }
+            if 'defaults' in opts and opts['defaults'] is None:
+                del opts['defaults']
             app_or_bp.add_url_rule(
                 f'{prefix}{base}{rule.rule}',
                 endpoint=f'{cls.__name__}:{rule.endpoint}',
